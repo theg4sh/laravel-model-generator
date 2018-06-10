@@ -1,5 +1,5 @@
 {
-  "name": "ignasbernotas/laravel-model-generator",
+  "name": "theg4sh/laravel-model-generator",
   "description": "Laravel 5 model generator from existing schema",
   "keywords": ["laravel", "model", "schema", "generator"],
   "license": "MIT",
@@ -7,6 +7,10 @@
     {
       "name": "Ignas Bernotas",
       "email": "ignas@iber.lt"
+    },
+    {
+      "name": "Alexandr Kondratev",
+      "email": "none",
     }
   ],
   "require": {
