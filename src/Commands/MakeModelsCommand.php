@@ -90,7 +90,7 @@ class MakeModelsCommand extends GeneratorCommand
      *
      * @return mixed
      */
-    public function fire()
+    public function handle()
     {
         if ($this->option("getset")) {
             // load the get/set function stubs
