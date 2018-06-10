@@ -10,7 +10,7 @@
     },
     {
       "name": "Alexandr Kondratev",
-      "email": "none",
+      "email": "none@none.test"
     }
   ],
   "require": {
@@ -21,6 +21,5 @@
     "psr-4": {
       "Iber\\Generator\\": "src/"
     }
-  },
-  "minimum-stability": "dev"
+  }
 }
