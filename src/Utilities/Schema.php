@@ -7,6 +7,7 @@ use Iber\Generator\Utilities\Table;
 use Iber\Generator\Utilities\Relation;
 use Iber\Generator\Command\MakeModelsCommand;
 use Iber\Generator\Utilities\DBEngine;
+use Illuminate\Support\Pluralizer;
 
 class Schema
 {
@@ -16,27 +17,20 @@ class Schema
 
     protected $_ruleProcessor;
     protected $_tablePrefix;
+    protected $_nsPluralizer;
+
     protected $pkeys;
     protected $columns;
     protected $relations;
     protected $uniques;
 
-    public function __construct($ruleProcessor, $tablePrefix = "")
+    public function __construct($ruleProcessor, $tablePrefix, $pathPrefix, callable $nsPluralizer)
     {
         Schema::$engine = DBEngine::getInstance();
         $this->_ruleProcessor = $ruleProcessor;
         $this->_tablePrefix = $tablePrefix;
-    }
-
-    public function getTables()
-    {
-        if (is_null(Schema::$tables)) {
-            Schema::$tables = [];
-            foreach (Schema::$engine->getTables() as $t) {
-                Schema::$tables[$t->name] = new Table($t->name, $this);
-            }
-        }
-        return Schema::$tables;
+        $this->_pathPrefix = $pathPrefix;
+        $this->_nsPluralizer = $nsPluralizer;
     }
 
     public function getTablePrefix()
@@ -49,9 +43,26 @@ class Schema
         return $this->_ruleProcessor;
     }
 
+    public function &getTables()
+    {
+        if (is_null(Schema::$tables)) {
+            Schema::$tables = [];
+            $tables = Schema::$engine->getTables();
+            foreach ($tables as $t) {
+                $table = new Table($t->name, $this);
+                $table->setNamespaceClass(
+                    call_user_func($this->_nsPluralizer,
+                        $this->_pathPrefix . $table->getClassName())
+                );
+                Schema::$tables[$t->name] = $table;
+            }
+        }
+        return Schema::$tables;
+    }
+
     public function getTable($tableName)
     {
-        return isset(Schema::$tables[$tableName]) ? Schema::$tables[$tableName] : NULL;
+        return Schema::$tables[$tableName] ?: NULL;
     }
 
     public function getTablePkey($tableName)
@@ -78,7 +89,7 @@ class Schema
                 $this->columns[$ck->table_name][] = $ck->column_name;
             }
         }
-        return isset($this->columns[$tableName]) ? $this->columns[$tableName] : NULL;
+        return isset($this->columns[$tableName]) ? $this->columns[$tableName] : [];
     }
 
     public function getTableRelations($tableName)
@@ -86,15 +97,18 @@ class Schema
         if (is_null($this->relations)) {
             $this->relations = [];
             foreach (Schema::$engine->getTableRelations() as $rel) {
-                foreach ([$rel->table_name, $rel->foreign_table_name] as $tn) {
-                    if (!isset($this->relations[$tn])) {
-                        $this->relations[$tn] = [];
-                    }
-                    $this->relations[$tn][] = $rel;
+                if (!isset($this->relations[$rel->table_name])) {
+                    $this->relations[$rel->table_name] = [];
                 }
+                //if (!isset($this->relations[$rel->foreign_table_name])) {
+                //    $this->relations[$rel->foreign_table_name] = [];
+                //}
+
+                $this->relations[$rel->table_name][] = $rel;
+                //$this->relations[$rel->foreign_table_name][] = $rel->getReversed();
             }
         }
-        return isset($this->relations[$tableName]) ? $this->relations[$tableName] : NULL;
+        return isset($this->relations[$tableName]) ? $this->relations[$tableName] : [];
     }
 
     public function getTableUniques($tableName)
@@ -108,7 +122,23 @@ class Schema
                 $this->uniques[$rel->table_name][] = $rel->column_name;
             }
         }
-        return isset($this->uniques[$tableName]) ? $this->uniques[$tableName] : NULL;
+        return isset($this->uniques[$tableName]) ? $this->uniques[$tableName] : [];
+    }
+
+    public function buildRelations()
+    {
+        foreach ($this->getTables() as $tableName => &$ltable) {
+            $lrels = $this->getTableRelations($tableName);
+            if (!$lrels) continue;
+            foreach ($lrels as $r) {
+                $rtable = $this->getTable($r->foreign_table_name);
+                $lrel = new Relation($ltable, $r->column_name,
+                    $rtable, $r->foreign_column_name);
+                $ltable->bindRelation($lrel);
+                $rrel = $lrel->getReversed();
+                $rtable->bindRelation($rrel);
+            }
+        }
     }
 }
 

@@ -18,6 +18,7 @@ class Table
 
     private $_raw_relations;
     private $_className;
+    private $_namespaceClass;
 
     protected $properties;
 
@@ -59,24 +60,6 @@ class Table
         }
     }
 
-    public function buildRelations()
-    {
-        if (is_null($this->_raw_relations)) return;
-        foreach ($this->_raw_relations as $r) {
-            $rel = new Relation(
-                    $this, $r->column_name,
-                    $this->_schema->getTable($r->foreign_table_name),
-                    $r->foreign_column_name
-                );
-
-            if ($this->name == $r->table_name) {
-                $this->bindRelation($rel);
-            } else {
-                $this->bindRelation($rel->getReversed());
-            }
-        }
-    }
-
     public function getPkey()
     {
         return $this->pkey;
@@ -92,33 +75,18 @@ class Table
         return $this->_className;
     }
 
+    public function setNamespaceClass($nsClass)
+    {
+        $this->_namespaceClass = $nsClass;
+    }
+
     public function getNamespaceClass()
     {
-        return trim(Table::$_namespace, '/') . '/' . $this->getClassName();
-    }
-
-    public function getProperties()
-    {
-        // TODO: replace by getFillable, getGuarded, hasTimestamps methods
-        return $this->properties;
-    }
-
-    public function getUniques()
-    {
-        return $this->uniques ? $this->uniques : [];
-    }
-
-    public function bindRelation($relation)
-    {
-        $this->relations[$relation->getColumn()] = $relation;
-    }
-
-    public function getRelations()
-    {
-        if (is_null($this->relations)) {
-            $this->buildRelations();
+        if (is_null($this->_namespaceClass)) {
+            return trim(Table::$_namespace, '/') . '/' . $this->getClassName();
+        } else {
+            return $this->_namespaceClass;
         }
-        return $this->relations ? $this->relations : [];
     }
 
     /**
@@ -132,4 +100,29 @@ class Table
     {
         return $this->columns;
     }
+
+    public function getProperties()
+    {
+        // TODO: replace by getFillable, getGuarded, hasTimestamps methods
+        return $this->properties;
+    }
+
+    public function getUniques()
+    {
+        return $this->uniques ?: [];
+    }
+
+    public function getRelations()
+    {
+        return $this->relations ?: [];
+    }
+
+    public function bindRelation(&$relation)
+    {
+        if (is_null($this->relations)) {
+            $this->relations = [];
+        }
+        $this->relations[$relation->toString()] = $relation;
+    }
+
 }

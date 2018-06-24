@@ -8,7 +8,7 @@ class RelationGenerator
 {
     protected $_table;
     protected $relationStub;
-    public function __construct($table, $relationStub)
+    public function __construct(&$table, $relationStub)
     {
         $this->_table = $table;
         $this->relationStub = $relationStub;
@@ -17,18 +17,18 @@ class RelationGenerator
     public function generateRelationFunctions()
     {
         $relations = "";
-        foreach($this->_table->getRelations() as $relation)
+        foreach($this->_table->getRelations() as &$relation)
         {
             $relations .= $this->generateRelationFunction($relation);
         }
         return $relations;
     }
 
-    protected function generateRelationFunction($relation)
+    protected function generateRelationFunction(&$relation)
     {
         $c = new StubTemplate($this->relationStub);
-        $c->bind('comment', $relation->getTable()->getName().'.'.$relation->getColumn() .
-            ' -> ' . $relation->getRelTable()->getName().'.'.$relation->getRelColumn());
+        $c->bind('comment', $relation->toString());
+
         $c->bind('model', str_replace('/', '\\', $relation->getRelTable()->getNamespaceClass()));
 
         $c->bind('function', $this->attributeNameToFunction('get', $relation->getRelationName(), array()));

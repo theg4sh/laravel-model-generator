@@ -4,33 +4,32 @@ namespace Iber\Generator\Utilities;
 
 class Relation
 {
-    private $_table;
-    private $_column;
-    private $_reltype;
+    private $_ltable;
+    private $_lcolumn;
+    private $_lreltype;
 
     private $_rtable;
     private $_rcolumn;
     private $_rreltype;
 
-    public function __construct($table, $column, $rtable, $rcolumn)
+    public function __construct(&$ltable, $lcolumn, &$rtable, $rcolumn)
     {
-        $this->_table = $table;
-        $this->_column = $column;
+        $this->_ltable = $ltable;
+        $this->_lcolumn = $lcolumn;
 
-        $this->_rcolumn  = $rcolumn;
         $this->_rtable   = $rtable;
+        $this->_rcolumn  = $rcolumn;
 
-
-        $this->_reltype = $this->solveRelation($table, $column, $rtable, $rcolumn);
-        $this->_rreltype = $this->solveRelation($rtable, $rcolumn, $table, $column);
+        $this->_lreltype = $this->solveRelation($ltable, $lcolumn, $rtable, $rcolumn);
+        $this->_rreltype = $this->solveRelation($rtable, $rcolumn, $ltable, $lcolumn);
     }
 
-    protected function solveRelation($table, $column, $rtable, $rcolumn)
+    protected function solveRelation(&$ltable, $lcolumn, &$rtable, $rcolumn)
     {
-        $uniques = $table->getUniques();
+        $uniques = $ltable->getUniques();
         $runiques = $rtable->getUniques();
 
-        if ($column == $table->getPkey() || in_array($column, $uniques)) {
+        if ($lcolumn == $ltable->getPkey() || in_array($lcolumn, $uniques)) {
             if ($rcolumn == $rtable->getPkey() || in_array($rcolumn, $runiques)) {
                 return 'belongsTo';
             } else {
@@ -43,43 +42,47 @@ class Relation
 
     public function getRelationName()
     {
-        $Column = $this->getColumn();
-        $relColumn = $this->getRelColumn();
-        if (preg_match('/_'.$relColumn.'$/', $Column)) {
-            $relName = substr($Column, 0,
-                                strlen($Column)-strlen($relColumn)-1);
-        } elseif (preg_match('/_'.$Column.'$/', $relColumn)) {
+        $lColumn = $this->getColumn();
+        $rColumn = $this->getRelColumn();
+        if (preg_match('/_'.$rColumn.'$/', $lColumn)) {
+            // related table's column name is a part of local column
+            $relName = substr($lColumn, 0, strlen($lColumn)-strlen($rColumn)-1);
+        } else {
             $relName = $this->getRelTable()->getName();
             if ($this->isRelatedToOne()) {
                 $relName = preg_replace('/s$/', '', $relName);
             }
-        } else {
-            $relName = $Column;
         }
         return $relName;
     }
 
     public function getReversed()
     {
-        return new Relation($this->_rtable, $this->_rcolumn, $this->_table, $this->_column);
+        return new Relation($this->_rtable, $this->_rcolumn, $this->_ltable, $this->_lcolumn);
+    }
+
+    public function toString()
+    {
+        return $this->_ltable->getName() . '.' . $this->_lcolumn . ' -> ' .
+               $this->_rtable->getName() . '.' . $this->_rcolumn;
     }
 
     public function isRelatedToOne()
     {
-        return in_array($this->_reltype, ['hasOne', 'belongsTo']);
+        return in_array($this->_lreltype, ['hasOne', 'belongsTo']);
     }
 
     public function getColumn()
     {
-        return $this->_column;
+        return $this->_lcolumn;
     }
 
-    public function getTable()
+    public function &getTable()
     {
-        return $this->_table;
+        return $this->_ltable;
     }
 
-    public function getRelTable()
+    public function &getRelTable()
     {
         return $this->_rtable;
     }
@@ -91,6 +94,6 @@ class Relation
 
     public function getRelType()
     {
-        return $this->_reltype;
+        return $this->_lreltype;
     }
 }

@@ -90,11 +90,6 @@ class MakeModelsCommand extends GeneratorCommand
     protected $relationsStub;
 
     /**
-     * @var string
-     */
-    protected $databaseEngine = 'mysql';
-
-    /**
      * @var Schema
      */
     protected $schema;
@@ -123,7 +118,20 @@ class MakeModelsCommand extends GeneratorCommand
             $this->option('guarded'),
             $this->option('timestamps')
         );
-        $this->schema = new Schema($this->ruleProcessor, $this->option('prefix'));
+
+        if (method_exists($this, 'qualifyClass')) {
+            $qualifyClass = function ($string) {
+                return Pluralizer::singular( $this->qualifyClass($string) ); };
+        } else {
+            $qualifyClass = function ($string) {
+                return Pluralizer::singular( $this->parseName($string) ); };
+        }
+
+        $this->schema = new Schema($this->ruleProcessor,
+            $this->option('prefix'),
+            $this->option('dir'),
+            $qualifyClass
+        );
 
         \Event::listen(StatementPrepared::class, function ($event) {
             /** @var \PDOStatement $statement */
@@ -137,7 +145,7 @@ class MakeModelsCommand extends GeneratorCommand
 
         $tableNames = $this->option("tables") ? explode(',', trim($this->option('tables'))) : [];
 
-        foreach ($this->generateTables() as $name => $table) {
+        foreach ($this->generateTables() as $name => &$table) {
             if (!empty($tableNames) and !in_array($name, $tableNames)) {
                 continue;
             }
@@ -147,14 +155,8 @@ class MakeModelsCommand extends GeneratorCommand
 
     protected function generateTables()
     {
-        $tables = [];
-        foreach ($this->schema->getTables() as $table) {
-            $table->buildRelations();
-            $tables[$table->getName()] = $table;
-        }
-        return $tables;
-
-        return $tables;
+        $this->schema->buildRelations();
+        return $this->schema->getTables();
     }
 
     /**
@@ -166,11 +168,8 @@ class MakeModelsCommand extends GeneratorCommand
      * @param $pkeys
      * @return void
      */
-    protected function generateTable($table)
+    protected function generateTable(&$table)
     {
-        //prefix is the sub-directory within app
-        $prefix = $this->option('dir');
-
         $ignoreTable = $this->option("ignore");
 
         if ($this->option("ignoresystem")) {
@@ -191,12 +190,18 @@ class MakeModelsCommand extends GeneratorCommand
             return;
         }
 
+        //prefix is the sub-directory within app
+        /*
+        $prefix = $this->option('dir');
         $class = $table->getClassName();
         if (method_exists($this, 'qualifyClass')) {
             $name = Pluralizer::singular($this->qualifyClass($prefix . $class));
         } else {
             $name = Pluralizer::singular($this->parseName($prefix . $class));
         }
+        //$table->setNamespaceClass($name);
+        */
+        $name = $table->getNamespaceClass();
 
         if ($this->files->exists($path = $this->getPath($name)) && !$this->option('force')) {
             return $this->error($this->extends . ' for ' . $tableName . ' already exists!');
