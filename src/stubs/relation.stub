@@ -1,0 +1,9 @@
+
+    /**
+     * @return mixed
+     * {{ comment }}
+     */
+    public function {{ function }}() {
+        return $this->{{ reltype }}('{{ model }}', {{ attribute }}, {{ rattribute }});
+    }
+

@@ -9,6 +9,17 @@ use Iber\Generator\Exceptions\InvalidRuleException;
  */
 class RuleProcessor
 {
+    private $_fillable;
+    private $_guarded;
+    private $_timestamps;
+
+    public function __construct($fillable, $guarded, $timestamps)
+    {
+        $this->_fillable = $fillable;
+        $this->_guarded = $guarded;
+        $this->_timestamps = $timestamps;
+    }
+
     /**
      * Check if the value matches the rules.
      *
@@ -19,7 +30,7 @@ class RuleProcessor
      *
      * @throws InvalidRuleException
      */
-    public function check($rules, $value)
+    protected function check($rules, $value)
     {
         if(empty($rules)) {
             return true;
@@ -42,6 +53,19 @@ class RuleProcessor
         }
 
         return false;
+    }
+
+    public function checkFillable($value)
+    {
+        return $this->check($this->_fillable, $value);
+    }
+    public function checkGuarded($value)
+    {
+        return $this->check($this->_guarded, $value);
+    }
+    public function checkTimestamps($value)
+    {
+        return $this->check($this->_timestamps, $value);
     }
 
     /**

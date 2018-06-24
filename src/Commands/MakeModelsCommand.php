@@ -9,6 +9,10 @@ use Illuminate\Console\GeneratorCommand;
 use Iber\Generator\Utilities\RuleProcessor;
 use Iber\Generator\Utilities\SetGetGenerator;
 use Iber\Generator\Utilities\VariableConversion;
+use Iber\Generator\Utilities\Table;
+use Iber\Generator\Utilities\Schema;
+use Iber\Generator\Utilities\RelationGenerator;
+use Iber\Generator\Utilities\StubTemplate;
 use Symfony\Component\Console\Input\InputOption;
 
 class MakeModelsCommand extends GeneratorCommand
@@ -79,11 +83,21 @@ class MakeModelsCommand extends GeneratorCommand
      * @var string
      */
     protected $getFunctionStub;
+    /**
+     * Contains the template stub for relation function
+     * @var string
+     */
+    protected $relationsStub;
 
     /**
      * @var string
      */
     protected $databaseEngine = 'mysql';
+
+    /**
+     * @var Schema
+     */
+    protected $schema;
 
     /**
      * Execute the console command.
@@ -92,18 +106,24 @@ class MakeModelsCommand extends GeneratorCommand
      */
     public function handle()
     {
+        $folder = __DIR__ . '/../stubs/';
         if ($this->option("getset")) {
             // load the get/set function stubs
-            $folder = __DIR__ . '/../stubs/';
 
             $this->setFunctionStub = $this->files->get($folder . "setFunction.stub");
             $this->getFunctionStub = $this->files->get($folder . "getFunction.stub");
         }
+        $this->relationStub = $this->files->get($folder . "relation.stub");
 
         // create rule processor
 
-        $this->ruleProcessor = new RuleProcessor();
-        $this->databaseEngine = config('database.default', 'mysql');
+        Table::setNamespace('App/' . $this->namespace);
+        $this->ruleProcessor = new RuleProcessor(
+            $this->option('fillable'),
+            $this->option('guarded'),
+            $this->option('timestamps')
+        );
+        $this->schema = new Schema($this->ruleProcessor, $this->option('prefix'));
 
         \Event::listen(StatementPrepared::class, function ($event) {
             /** @var \PDOStatement $statement */
@@ -115,43 +135,24 @@ class MakeModelsCommand extends GeneratorCommand
             $statement->setFetchMode($pdo::FETCH_CLASS, \stdClass::class);
         });
 
-        $tables = $this->getSchemaTables();
+        $tableNames = $this->option("tables") ? explode(',', trim($this->option('tables'))) : [];
 
-        foreach ($tables as $table) {
-            $table = (object) $table;
-            $this->generateTable( $table->name );
+        foreach ($this->generateTables() as $name => $table) {
+            if (!empty($tableNames) and !in_array($name, $tableNames)) {
+                continue;
+            }
+            $this->generateTable( $table );
         }
     }
 
-    /**
-     * Get schema tables.
-     *
-     * @return array
-     */
-    protected function getSchemaTables()
+    protected function generateTables()
     {
-        $filterTablesWhere = '';
-        if ($this->option("tables")) {
-            $tableNamesToFilter = explode(',', $this->option('tables'));
-            if (is_array($tableNamesToFilter) && count($tableNamesToFilter) > 0) {
-                $filterTablesWhere = ' AND table_name IN (\'' . implode('\', \'', $tableNamesToFilter) . '\')';
-            }
+        $tables = [];
+        foreach ($this->schema->getTables() as $table) {
+            $table->buildRelations();
+            $tables[$table->getName()] = $table;
         }
-
-        switch ($this->databaseEngine) {
-            case 'mysql':
-                $tables = \DB::select("SELECT table_name AS name FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_schema = '" . env('DB_DATABASE') . "'" . $filterTablesWhere);
-                break;
-
-            case 'sqlsrv':
-            case 'dblib':
-                $tables = \DB::select("SELECT table_name AS name FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_catalog = '" . env('DB_DATABASE') . "'" . $filterTablesWhere);
-                break;
-
-            case 'pgsql':
-                $tables = \DB::select("SELECT table_name AS name FROM information_schema.tables WHERE table_schema = 'public' AND table_type='BASE TABLE' AND table_catalog = '" . env('DB_DATABASE') . "'" . $filterTablesWhere);
-                break;
-        }
+        return $tables;
 
         return $tables;
     }
@@ -160,6 +161,9 @@ class MakeModelsCommand extends GeneratorCommand
      * Generate a model file from a database table.
      *
      * @param $table
+     * @param $relations
+     * @param $uniques
+     * @param $pkeys
      * @return void
      */
     protected function generateTable($table)
@@ -180,18 +184,14 @@ class MakeModelsCommand extends GeneratorCommand
         }
 
         // if we have ignore tables, we need to find all the posibilites
-        if (is_string($ignoreTable) && preg_match("/^" . $table . "|^" . $table . ",|," . $table . ",|," . $table . "$/", $ignoreTable)) {
-            $this->info($table . " is ignored");
+        $tableName = $table->getName();
+        if (is_string($ignoreTable) && preg_match("/^" . $tableName . "|^" . $tableName . ",|," . $tableName . ",|," . $tableName . "$/", $ignoreTable)) {
+            $this->info($tableName . " is ignored");
 
             return;
         }
 
-        // replace table prefix
-        $tablePrefix = $this->option('prefix') ?: \DB::getTablePrefix();
-        $prefixRemovedTableName = str_replace($tablePrefix, '', $table);
-
-        $class = VariableConversion::convertTableNameToClassName($prefixRemovedTableName);
-        
+        $class = $table->getClassName();
         if (method_exists($this, 'qualifyClass')) {
             $name = Pluralizer::singular($this->qualifyClass($prefix . $class));
         } else {
@@ -199,14 +199,14 @@ class MakeModelsCommand extends GeneratorCommand
         }
 
         if ($this->files->exists($path = $this->getPath($name)) && !$this->option('force')) {
-            return $this->error($this->extends . ' for ' . $table . ' already exists!');
+            return $this->error($this->extends . ' for ' . $tableName . ' already exists!');
         }
 
         $this->makeDirectory($path);
 
         $this->files->put($path, $this->replaceTokens($name, $table));
 
-        $this->info($this->extends . ' for ' . $table . ' created successfully.');
+        $this->info($this->extends . ' for ' . $tableName . ' created successfully.');
     }
 
     /**
@@ -219,29 +219,32 @@ class MakeModelsCommand extends GeneratorCommand
      */
     protected function replaceTokens($name, $table)
     {
-        $class = $this->buildClass($name);
-
-        $properties = $this->getTableProperties($table);
+        $c = new StubTemplate($this->buildClass($name));
 
         $extends = $this->option('extends');
 
-        $class = str_replace('{{table}}', 'protected $table = \'' . $table . '\';', $class);
+        $c->bind('extends', $extends);
+        $c->bind('shortNameExtends', explode('\\', $extends)[count(explode('\\', $extends)) - 1]);
 
-        $class = str_replace('{{primaryKey}}', $properties['primaryKey'] ? ('protected $primaryKey = \'' . $properties['primaryKey'] . '\';' . "\r\n\r\n\t") : '', $class);
+        $c->bindProperty('table', 'protected', 'table', $table->getName());
 
-        $class = str_replace('{{extends}}', $extends, $class);
-        $class = str_replace('{{shortNameExtends}}', explode('\\', $extends)[count(explode('\\', $extends)) - 1], $class);
-        $class = str_replace('{{fillable}}', 'protected $fillable = ' . VariableConversion::convertArrayToString($properties['fillable']) . ';', $class);
-        $class = str_replace('{{guarded}}', 'protected $guarded = ' . VariableConversion::convertArrayToString($properties['guarded']) . ';', $class);
-        $class = str_replace('{{timestamps}}', 'public $timestamps = ' . VariableConversion::convertBooleanToString($properties['timestamps']) . ';', $class);
-
-        if ($this->option("getset")) {
-            $class = $this->replaceTokensWithSetGetFunctions($properties, $class);
-        } else {
-            $class = str_replace(["{{setters}}\n\n", "{{getters}}\n\n"], '', $class);
+        if ($table->getPkey()) {
+            $c->bindProperty('primaryKey', 'protected', 'primaryKey', $table->getPkey());
         }
 
-        return $class;
+        $properties = $table->getProperties();
+        $c->bindProperty('fillable',   'protected', 'fillable',   $properties['fillable']);
+        $c->bindProperty('guarded',    'protected', 'guarded',    $properties['guarded']);
+        $c->bindProperty('timestamps', 'public',    'timestamps', $properties['timestamps']);
+
+        if ($this->option("getset")) {
+            $this->replaceTokensWithSetGetFunctions($properties, $c, "");
+        }
+
+        $relations = new RelationGenerator($table, $this->relationStub);
+        $c->bind('relations', $relations->generateRelationFunctions());
+
+        return $c->finalize();
     }
 
     /**
@@ -252,7 +255,7 @@ class MakeModelsCommand extends GeneratorCommand
      * @param  string $class
      * @return string
      */
-    protected function replaceTokensWithSetGetFunctions($properties, $class)
+    protected function replaceTokensWithSetGetFunctions($properties, &$c, $class)
     {
         $getters = "";
         $setters = "";
@@ -264,131 +267,8 @@ class MakeModelsCommand extends GeneratorCommand
         $guardedGetSet = new SetGetGenerator($properties['guarded'], $this->getFunctionStub, $this->setFunctionStub);
         $getters .= $guardedGetSet->generateGetFunctions();
 
-        return str_replace([
-            "{{setters}}",
-            "{{getters}}"
-        ], [
-            $setters,
-            $getters
-        ], $class);
-    }
-
-    /**
-     * Fill up $fillable/$guarded/$timestamps properties based on table columns.
-     *
-     * @param $table
-     *
-     * @return array
-     */
-    protected function getTableProperties($table)
-    {
-        $primaryKey = $this->getTablePrimaryKey($table);
-        $primaryKey = $primaryKey != 'id' ? $primaryKey : null;
-
-        $fillable = [];
-        $guarded = [];
-        $timestamps = false;
-
-        $columns = $this->getTableColumns($table);
-
-        foreach ($columns as $column) {
-            $column = (object) $column;
-
-            //priotitze guarded properties and move to fillable
-            if ($this->ruleProcessor->check($this->option('fillable'), $column->name)) {
-                if (!in_array($column->name, array_merge(['id', 'created_at', 'updated_at', 'deleted_at'], $primaryKey ? [$primaryKey] : []))) {
-                    $fillable[] = $column->name;
-                }
-            }
-            if ($this->ruleProcessor->check($this->option('guarded'), $column->name)) {
-                $fillable[] = $column->name;
-            }
-            //check if this model is timestampable
-            if ($this->ruleProcessor->check($this->option('timestamps'), $column->name)) {
-                $timestamps = true;
-            }
-        }
-
-        return ['primaryKey' => $primaryKey, 'fillable' => $fillable, 'guarded' => $guarded, 'timestamps' => $timestamps];
-    }
-
-    /**
-     * Get table columns.
-     *
-     * @param $table
-     *
-     * @return array
-     */
-    protected function getTableColumns($table)
-    {
-        switch ($this->databaseEngine) {
-
-            case 'mysql':
-                $columns = \DB::select("SELECT COLUMN_NAME as `name` FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '" . env("DB_DATABASE") . "' AND TABLE_NAME = '{$table}'");
-                break;
-
-            case 'sqlsrv':
-            case 'dblib':
-                $columns = \DB::select("SELECT COLUMN_NAME as 'name' FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_CATALOG = '" . env("DB_DATABASE") . "' AND TABLE_NAME = '{$table}'");
-                break;
-
-            case 'pgsql':
-                $columns = \DB::select("SELECT COLUMN_NAME as name FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_CATALOG = '" . env("DB_DATABASE") . "' AND TABLE_NAME = '{$table}'");
-                break;
-        }
-
-        return $columns;
-    }
-
-    /**
-     * Get table primary key column.
-     *
-     * @param $table
-     *
-     * @return string
-     */
-    protected function getTablePrimaryKey($table)
-    {
-
-        switch ($this->databaseEngine) {
-            case 'mysql':
-                $primaryKeyResult = \DB::select(
-                    "SELECT COLUMN_NAME
-                  FROM information_schema.COLUMNS 
-                  WHERE  TABLE_SCHEMA = '" . env("DB_DATABASE") . "' AND 
-                         TABLE_NAME = '{$table}' AND 
-                         COLUMN_KEY = 'PRI'");
-                break;
-
-            case 'sqlsrv':
-            case 'dblib':
-                $primaryKeyResult = \DB::select(
-                    "SELECT ku.COLUMN_NAME
-                   FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS AS tc
-                   INNER JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE AS ku
-                   ON tc.CONSTRAINT_TYPE = 'PRIMARY KEY' 
-                   AND tc.CONSTRAINT_NAME = ku.CONSTRAINT_NAME
-                   WHERE ku.TABLE_CATALOG ='" . env("DB_DATABASE") . "' AND ku.TABLE_NAME='{$table}';");
-                break;
-
-            case 'pgsql':
-                $primaryKeyResult = \DB::select(
-                    "SELECT ku.COLUMN_NAME AS \"COLUMN_NAME\"
-                   FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS AS tc
-                   INNER JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE AS ku
-                   ON tc.CONSTRAINT_TYPE = 'PRIMARY KEY' 
-                   AND tc.CONSTRAINT_NAME = ku.CONSTRAINT_NAME
-                   WHERE ku.TABLE_CATALOG ='" . env("DB_DATABASE") . "' AND ku.TABLE_NAME='{$table}';");
-                break;
-
-        }
-
-        if (count($primaryKeyResult) == 1) {
-            $table = (object) $primaryKeyResult[0];
-            return $table->COLUMN_NAME;
-        }
-
-        return null;
+        $c->bind('setters', $setters);
+        $c->bind('getters', $getters);
     }
 
     /**

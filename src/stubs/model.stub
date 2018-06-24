@@ -11,7 +11,9 @@ class DummyClass extends {{shortNameExtends}}
 {
     {{table}}
 
-    {{primaryKey}}{{timestamps}}
+    {{primaryKey}}
+
+    {{timestamps}}
 
     {{fillable}}
 
@@ -20,6 +22,8 @@ class DummyClass extends {{shortNameExtends}}
     {{getters}}
 
     {{setters}}
+
+    {{relations}}
 
 
 }
